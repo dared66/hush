@@ -17,6 +17,9 @@ for bundle in Applications/Hush.app Library/Audio/Plug-Ins/HAL/HushAudio.driver;
   [[ $(plutil -extract CFBundleShortVersionString raw "$payload/$bundle/Contents/Info.plist") == "$version" ]]
   codesign --verify --deep --strict "$payload/$bundle"
 done
+for executable in Applications/Hush.app/Contents/MacOS/Hush Applications/Hush.app/Contents/Resources/Uninstaller/RestoreAudio Library/Audio/Plug-Ins/HAL/HushAudio.driver/Contents/MacOS/HushAudio; do
+  lipo -verify_arch arm64 x86_64 "$payload/$executable"
+done
 resources="$payload/Applications/Hush.app/Contents/Resources"
 [[ -f "$resources/Hush.icns" && -x "$resources/Uninstaller/RestoreAudio" ]]
 [[ -f "$resources/Uninstaller/launch-uninstall.sh" && -f "$resources/Uninstaller/uninstall.sh" ]]

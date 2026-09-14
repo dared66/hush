@@ -5,7 +5,7 @@ driver=build/HushAudio.driver
 rm -rf "$driver"
 mkdir -p "$driver/Contents/MacOS" "$driver/Contents/Resources/English.lproj"
 xcrun clang++ -std=c++17 -fblocks -O2 -DDEBUG=0 -Wno-deprecated-declarations \
-  -mmacosx-version-min=14.4 -bundle -framework CoreAudio -framework CoreFoundation \
+  -arch arm64 -arch x86_64 -mmacosx-version-min=14.4 -bundle -framework CoreAudio -framework CoreFoundation \
   -framework CoreServices -framework IOKit -framework ApplicationServices \
   -Idriver/ProxyAudio -Idriver/ProxyAudio/PublicUtility -Idriver/shared \
   driver/ProxyAudio/*.cpp driver/ProxyAudio/PublicUtility/*.cpp driver/shared/*.cpp \

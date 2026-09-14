@@ -8,11 +8,11 @@
 4. Review the archive for credentials, device identifiers, local paths, generated binaries, and filesystem metadata.
 5. Update the changelog and record hardware validation below before tagging a release.
 
-`Info.plist` is the version source for the app, packaged driver, installer, and archive. Packaging does not install anything or publish releases. CI builds locally signed artifacts without publishing them.
+`Info.plist` is the version source for the app, packaged driver, installer, and archive. Local packaging does not install or publish anything. Every push to `main` that passes the macOS check matrix publishes a universal `Hush.pkg` and SHA-256 checksum in its own GitHub Release. Releases use unique workflow-run tags, so repeated app versions do not overwrite earlier installers. Only the current main commit is marked latest; the README points to its stable asset URL. Pull requests never publish.
 
 ## Binary releases
 
-Local build scripts use ad-hoc signatures. A consumer binary release needs a maintainer-owned signing and notarization process, with signatures verified on the app, nested helper, driver, and installer. Signing credentials must never enter the source tree. That release pipeline is not implemented here.
+Local build scripts use ad-hoc signatures. A consumer binary release needs a maintainer-owned signing and notarization process, with signatures verified on the app, nested helper, driver, and installer. Signing credentials must never enter the source tree. The automated download pipeline currently publishes experimental, ad-hoc-signed packages; Developer ID signing and notarization are not implemented.
 
 The integrated uninstaller currently uses the deprecated `AuthorizationExecuteWithPrivileges` API. Modernizing that authorization mechanism and validating it on supported macOS versions remain binary-release work. Source availability does not imply production readiness.
 

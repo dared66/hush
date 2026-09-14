@@ -32,3 +32,45 @@ jobs:
           tar -xzf "$archive" -C "$source_check"
           cd "$source_check"
           zsh scripts/check.sh
+
+  release:
+    name: Publish installer
+    needs: macos
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build universal installer
+        run: zsh scripts/package-installer.sh
+      - name: Publish this commit's installer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=$(plutil -extract CFBundleShortVersionString raw Info.plist)
+          cp "dist/Hush-$version.pkg" dist/Hush.pkg
+          (cd dist && shasum -a 256 Hush.pkg > SHA256SUMS)
+          tag="build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cat > dist/release-notes.md <<EOF
+          Download **Hush.pkg**, open it, and follow the installer. No build tools needed.
+
+          One installer supports Apple silicon and Intel Macs running macOS 14.4 or newer.
+          After installation, use Control Center → Sound and select your monitor's **(Hush)** output.
+
+          Experimental build: the installer is ad-hoc signed, not notarized, so macOS may block it pending explicit approval. Installation briefly restarts audio and requires an administrator password.
+
+          Version: $version · Commit: $GITHUB_SHA
+          Automated build, routing, driver, and installer checks passed. These do not replace hardware testing.
+          EOF
+          latest=false
+          head=$(gh api "repos/$GH_REPO/commits/main" --jq .sha)
+          if [[ "$head" == "$GITHUB_SHA" ]]; then latest=true; fi
+          gh release create "$tag" dist/Hush.pkg dist/SHA256SUMS \
+            --target "$GITHUB_SHA" --title "Hush $version · build $GITHUB_RUN_NUMBER" \
+            --notes-file dist/release-notes.md --latest="$latest"

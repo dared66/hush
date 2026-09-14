@@ -10,13 +10,15 @@ Monitor volume grayed out on your Mac? Hush lets you adjust it with the volume k
 
 Requires **macOS 14.4 or newer**.
 
-1. Open the **Hush `.pkg` installer**.
+1. **[Download Hush.pkg](https://github.com/dared66/hush/releases/latest/download/Hush.pkg)** and open it.
 2. Follow the prompts and enter your Mac administrator password when asked.
 3. Hush starts automatically, including after you restart your Mac.
 
 Pause playback or calls before installing—audio restarts briefly.
 
-**This is an experimental source release.** There is no notarized public download yet. If you don’t already have an installer, follow [Build from source](#build-from-source) below.
+**One installer for Apple silicon and Intel.** New installers are published in [Releases](https://github.com/dared66/hush/releases) after every push to `main` passes checks.
+
+Hush is experimental. Downloads are ad-hoc signed, not notarized, so macOS may block opening them pending explicit approval.
 
 ## Use
 
@@ -43,7 +45,7 @@ zsh scripts/check.sh
 zsh scripts/install.sh
 ```
 
-This checks the code, builds Hush, and opens the installer. Builds target your Mac’s architecture. Local installers use ad-hoc signatures and are not notarized.
+This checks the code, builds Hush, and opens the installer. The installer supports both Apple silicon and Intel. Local installers use ad-hoc signatures and are not notarized.
 
 ## Compatibility and development
 
