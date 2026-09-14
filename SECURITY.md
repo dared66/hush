@@ -4,7 +4,7 @@ Hush handles live audio locally. It contains no recording, analytics, or network
 
 Installation and removal require administrator authorization because the HAL driver is system-wide. The routing agent runs as the logged-in user. The uninstaller stages its helpers in a private temporary directory before removing the app. It writes a restricted diagnostic log to a uniquely named file under `/private/tmp/hush-uninstall-log.*`; that log may include device names.
 
-Downloads are not Developer ID signed or notarized. See the [installation and signing FAQ](README.md#if-macos-blocks-the-installer) for approval steps and limitations.
+Downloads are not Developer ID signed or notarized. See the [installation and signing FAQ](docs/INSTALLATION.md) for approval steps and limitations.
 
 This is experimental software. The uninstaller’s authorization API is deprecated, and end-to-end privileged removal and broader hardware coverage remain release requirements. See [release validation](docs/RELEASING.md).
 
