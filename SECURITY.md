@@ -1,9 +1,9 @@
 # Security and privacy
 
-Hush processes system output audio on the local Mac. It does not access the microphone or screen, persist audio samples, make network requests, or ship third-party runtime dependencies. macOS audio-capture permission is required for the Core Audio tap.
+Hush handles live audio locally. It contains no recording, analytics, or network functionality. Diagnostics expose output-device identifiers, routing state, volume/mute, and numeric audio peaks. Review identifiers before sharing output.
 
-Optional `--diagnostics PATH` writes numeric levels, connection errors, and the audio device name to a user-selected file. Do not share that file without reviewing it. Diagnostics are disabled during normal launches.
+Installation and removal require administrator authorization because the HAL driver is system-wide. The routing agent runs as the logged-in user. The uninstaller stages its helpers in a private temporary directory before removing the app. It writes a restricted diagnostic log to a uniquely named file under `/private/tmp/hush-uninstall-log.*`; that log may include device names.
 
-Only the latest source revision receives fixes. Builds are currently intended for local compilation; a notarized binary distribution is not provided.
+This is experimental software. The uninstaller’s authorization API is deprecated, and end-to-end privileged removal and broader hardware coverage remain release requirements. See [release validation](docs/RELEASING.md).
 
-Use [GitHub private vulnerability reporting](https://github.com/dared66/hush/security/advisories/new) for security issues. If private reporting is unavailable, open an issue requesting a private contact route without including exploit details, sensitive logs, or captured audio. Do not post secrets in public issues.
+No private security-reporting channel is configured in this source distribution. A hosting maintainer should enable private vulnerability reporting before publishing. Avoid posting credentials, personal identifiers, recordings, or exploit details in public issues.

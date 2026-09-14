@@ -5,3 +5,9 @@
 *.xcuserstate
 .env
 .env.*
+
+# macOS archive metadata and local diagnostics
+._*
+*.log
+*.pkg
+*.tar.gz

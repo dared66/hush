@@ -18,5 +18,17 @@ jobs:
           persist-credentials: false
       - name: Build, sanitize, and verify installation scripts
         run: zsh scripts/check.sh
+      - name: Package and verify installer (does not install)
+        run: zsh scripts/package-installer.sh
       - name: Package source
         run: zsh scripts/package-source.sh
+      - name: Verify source archive builds independently
+        shell: bash
+        run: |
+          version=$(plutil -extract CFBundleShortVersionString raw Info.plist)
+          archive="$PWD/dist/hush-$version-source.tar.gz"
+          source_check=$(mktemp -d)
+          trap 'rm -rf "$source_check"' EXIT
+          tar -xzf "$archive" -C "$source_check"
+          cd "$source_check"
+          zsh scripts/check.sh

@@ -1,17 +1,25 @@
-# Audio path
+# Native volume architecture
 
-```text
-Applications → device-scoped Core Audio tap → stereo gain → same output device
-                         │
-              excludes Hush’s process
-```
+Applications → Hush HAL output driver → software volume/mute → physical HDMI output.
 
-The tap captures applications sending sound to the default output’s first stream. `CATapMutedWhenTapped` suppresses their original playback only while the tap is read. A private aggregate combines the physical output with the tap, keeping capture and playback on the output’s clock. The callback copies tap input into output with smoothed attenuation. Hush does not change the system’s default output.
+The HAL driver exposes real Core Audio volume controls. It proxies audio independently of the background app, matching its clock to the selected output. Core Audio, rather than a custom Hush slider, owns the user-facing volume controls.
 
-Setup validates stereo Float32 streams and matching sample rates before starting. It rejects physical devices with input streams because the aggregate input layout would differ. Cleanup stops and destroys the callback, aggregate, and tap in that order.
+The Objective-C routing agent starts silently with `--background`. Opening Hush shows a small settings window with an integrated uninstall action; reopening an existing instance brings that window forward. Closing the window leaves audio routing active. It enumerates live physical outputs, checks native volume support, applies a deterministic hotplug policy, and configures the driver's target. A custom read-only readiness property prevents selecting the virtual output before its destination is prepared. Read-only numeric peak counters support verification without recording audio.
 
-The render callback supports planar and interleaved stereo, clears output before processing, bounds processing to the shortest available buffer, and converts non-finite samples to silence. Gain targets are atomic; the callback alone owns the current gain and ramp. 0–100 maps to squared linear amplitude. No resampling or amplification above unity is performed.
+The app stores per-output proxy volume and mute values in its preferences. Graceful agent termination preserves playback through the driver; it does not restore full-volume HDMI unexpectedly. Physical audio continues if the agent crashes, while automatic rerouting waits for the login agent to restart it.
 
-The main thread owns audio setup and UI. A one-second timer checks the default output and refreshes status. Workspace sleep/wake notifications stop and restart processing. Same-device format changes, transient startup failures, and permission changes may require manual reconnect. Callback activity indicates processing activity, not an independent measurement of audible output.
+The current driver base contains locks in its upstream processing implementation; this version does not claim lock-free audio processing. Hush patches include distinct driver identifiers, routing-readiness and numeric peak properties, a UTF-8 allocation fix, null configuration handling, self-route rejection, and non-finite sample sanitization.
 
-Reference: [Apple’s Core Audio tap overview](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps).
+## Routing and supported formats
+
+Explicit physical-output selection takes priority. Newly connected Bluetooth outputs rank above USB, displays, and built-in speakers; USB ranks above displays and built-in speakers. A newly connected display does not displace higher-priority headphones. On disconnect, routing falls back to an available output. Manually selected unrelated virtual or unsupported outputs are left alone.
+
+Proxying requires stereo, interleaved, 32-bit floating-point PCM. Multichannel and encoded passthrough are unsupported. The driver matches its sample rate to supported hardware rates. The ready-UID property (`huid`) identifies the prepared physical output across process boundaries; numeric Core Audio handles must not be compared across processes.
+
+## Diagnostics
+
+`/Applications/Hush.app/Contents/MacOS/Hush --status` prints output identifiers, routing state, volume/mute, and numeric audio peaks. It does not record audio. Review device identifiers before sharing diagnostics.
+
+After building, `bash "build/Hush.app/Contents/Resources/Uninstaller/uninstall.sh" --dry-run` checks audio restoration without uninstalling anything.
+
+The driver is installed system-wide; its removal affects all users. Preference cleanup applies to the logged-in user. The uninstaller restores playback and sound effects before deleting the app and driver, stopping before deletion if restoration fails. Downloaded installers and source files are retained.

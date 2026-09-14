@@ -1,298 +1,299 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreAudio/CoreAudio.h>
-#import <CoreAudio/CATapDescription.h>
-#import <CoreAudio/AudioHardwareTapping.h>
-#import "AudioRender.h"
+#import <Security/Security.h>
+#import "RoutePolicy.h"
+#include <signal.h>
 
-static AudioObjectPropertyAddress address(AudioObjectPropertySelector sel, AudioObjectPropertyScope scope) {
-    return (AudioObjectPropertyAddress){sel, scope, kAudioObjectPropertyElementMain};
+static NSString *const proxyUID = @"HushAudioDevice_UID";
+static AudioObjectPropertyAddress Addr(UInt32 selector, UInt32 scope, UInt32 element) {
+    return (AudioObjectPropertyAddress){selector, scope, element};
 }
-static OSStatus readProperty(AudioObjectID obj, AudioObjectPropertySelector sel, AudioObjectPropertyScope scope, UInt32 size, void *value) {
-    AudioObjectPropertyAddress a = address(sel, scope);
-    return AudioObjectGetPropertyData(obj, &a, 0, NULL, &size, value);
+static OSStatus Get(AudioObjectID obj, UInt32 selector, UInt32 scope, UInt32 element, UInt32 size, void *data) {
+    AudioObjectPropertyAddress a = Addr(selector, scope, element);
+    return AudioObjectGetPropertyData(obj, &a, 0, NULL, &size, data);
 }
-static NSString *stringProperty(AudioObjectID obj, AudioObjectPropertySelector sel) {
-    CFStringRef value = NULL;
-    if (readProperty(obj, sel, kAudioObjectPropertyScopeGlobal, sizeof(value), &value) != noErr) return @"";
-    return CFBridgingRelease(value) ?: @"";
+static OSStatus Set(AudioObjectID obj, UInt32 selector, UInt32 scope, UInt32 element, UInt32 size, const void *data) {
+    AudioObjectPropertyAddress a = Addr(selector, scope, element);
+    return AudioObjectSetPropertyData(obj, &a, 0, NULL, size, data);
 }
-static AudioDeviceID defaultOutput(void) {
-    AudioDeviceID device = 0;
-    readProperty(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, sizeof(device), &device);
-    return device;
+static NSString *String(AudioObjectID obj, UInt32 selector) {
+    CFStringRef s = NULL;
+    if (Get(obj, selector, kAudioObjectPropertyScopeGlobal, 0, sizeof(s), &s)) return @"";
+    return CFBridgingRelease(s) ?: @"";
 }
-static NSArray<NSValue *> *formats(AudioDeviceID device, AudioObjectPropertyScope scope) {
-    AudioObjectPropertyAddress a = address(kAudioDevicePropertyStreams, scope);
+static UInt32 Integer(AudioObjectID obj, UInt32 selector, UInt32 scope) {
+    UInt32 n = 0; Get(obj, selector, scope, 0, sizeof(n), &n); return n;
+}
+static AudioDeviceID Default(void) { return Integer(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal); }
+static AudioDeviceID Lookup(NSString *uid, UInt32 selector) {
+    AudioObjectPropertyAddress a = Addr(selector, kAudioObjectPropertyScopeGlobal, 0);
+    CFStringRef value = (__bridge CFStringRef)uid;
+    AudioObjectID obj = 0; UInt32 size = sizeof(obj);
+    AudioObjectGetPropertyData(kAudioObjectSystemObject, &a, sizeof(value), &value, &size, &obj);
+    return obj;
+}
+static AudioDeviceID Proxy(void) { return Lookup(proxyUID, kAudioHardwarePropertyTranslateUIDToDevice); }
+static BOOL Writable(AudioDeviceID obj, UInt32 selector, UInt32 channel) {
+    AudioObjectPropertyAddress a = Addr(selector, kAudioDevicePropertyScopeOutput, channel);
+    Boolean yes = NO;
+    return AudioObjectHasProperty(obj, &a) && !AudioObjectIsPropertySettable(obj, &a, &yes) && yes;
+}
+static NSArray<NSDictionary *> *Devices(void) {
+    AudioObjectPropertyAddress a = Addr(kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, 0);
     UInt32 size = 0;
-    if (AudioObjectGetPropertyDataSize(device, &a, 0, NULL, &size) != noErr) return @[];
-    AudioStreamID *streams = calloc(1, MAX(size, 1));
-    if (!streams) return @[];
+    if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &a, 0, NULL, &size)) return @[];
+    NSMutableData *data = [NSMutableData dataWithLength:size];
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &a, 0, NULL, &size, data.mutableBytes)) return @[];
     NSMutableArray *result = [NSMutableArray array];
-    if (AudioObjectGetPropertyData(device, &a, 0, NULL, &size, streams) == noErr) {
-        for (UInt32 i = 0; i < size / sizeof(AudioStreamID); i++) {
-            AudioStreamBasicDescription f = {0};
-            if (readProperty(streams[i], kAudioStreamPropertyVirtualFormat, kAudioObjectPropertyScopeGlobal, sizeof(f), &f) == noErr)
-                [result addObject:[NSValue valueWithBytes:&f objCType:@encode(AudioStreamBasicDescription)]];
-        }
+    AudioDeviceID *ids = data.mutableBytes;
+    for (UInt32 i = 0; i < size / sizeof(AudioDeviceID); i++) {
+        AudioDeviceID d = ids[i];
+        NSString *uid = String(d, kAudioDevicePropertyDeviceUID);
+        UInt32 transport = Integer(d, kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal);
+        if (!uid.length || [uid isEqualToString:proxyUID] || transport == kAudioDeviceTransportTypeVirtual || transport == kAudioDeviceTransportTypeAggregate ||
+            !Integer(d, kAudioDevicePropertyDeviceIsAlive, kAudioObjectPropertyScopeGlobal)) continue;
+        a = Addr(kAudioDevicePropertyStreamConfiguration, kAudioDevicePropertyScopeOutput, 0);
+        UInt32 bytes = 0;
+        if (AudioObjectGetPropertyDataSize(d, &a, 0, NULL, &bytes) || !bytes) continue;
+        NSMutableData *config = [NSMutableData dataWithLength:bytes];
+        if (AudioObjectGetPropertyData(d, &a, 0, NULL, &bytes, config.mutableBytes)) continue;
+        AudioBufferList *buffers = config.mutableBytes;
+        UInt32 channels = 0;
+        for (UInt32 b = 0; b < buffers->mNumberBuffers; b++) channels += buffers->mBuffers[b].mNumberChannels;
+        if (!channels) continue;
+        BOOL native = Writable(d, kAudioDevicePropertyVolumeScalar, 0) ||
+            (Writable(d, kAudioDevicePropertyVolumeScalar, 1) && (channels == 1 || Writable(d, kAudioDevicePropertyVolumeScalar, 2)));
+        AudioStreamBasicDescription f = {0};
+        BOOL proxyable = !Get(d, kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeOutput, 0, sizeof(f), &f) &&
+            f.mFormatID == kAudioFormatLinearPCM && (f.mFormatFlags & kAudioFormatFlagIsFloat) &&
+            !(f.mFormatFlags & (kAudioFormatFlagIsNonInterleaved | kAudioFormatFlagIsBigEndian)) &&
+            f.mBitsPerChannel == 32 && f.mChannelsPerFrame == 2 && f.mBytesPerFrame == 8 && f.mFramesPerPacket == 1;
+        if (!native && !proxyable) continue;
+        BOOL builtin = transport == kAudioDeviceTransportTypeBuiltIn;
+        int rank = builtin ? 10 : 20;
+        if (transport == kAudioDeviceTransportTypeUSB) rank = 30;
+        if (transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE) rank = 40;
+        [result addObject:@{@"id": @(d), @"uid": uid, @"name": String(d, kAudioObjectPropertyName), @"native": @(native), @"proxyable": @(proxyable), @"builtin": @(builtin), @"rank": @(rank)}];
     }
-    free(streams);
     return result;
 }
-static BOOL validFormat(AudioStreamBasicDescription f) {
-    UInt32 channelsPerBuffer = (f.mFormatFlags & kAudioFormatFlagIsNonInterleaved) ? 1 : 2;
-    return isfinite(f.mSampleRate) && f.mSampleRate > 0 &&
-        f.mBytesPerFrame == sizeof(float) * channelsPerBuffer && f.mFramesPerPacket == 1 &&
-        f.mFormatID == kAudioFormatLinearPCM && (f.mFormatFlags & kAudioFormatFlagIsFloat) &&
-        !(f.mFormatFlags & kAudioFormatFlagIsBigEndian) && f.mBitsPerChannel == 32 && f.mChannelsPerFrame == 2;
-}
-
-@interface AudioController : NSObject {
-@public
-    Gain gain;
-    AudioObjectID tap;
-    AudioDeviceID aggregate;
-    AudioDeviceID output;
-    AudioDeviceIOProcID proc;
-    BOOL started;
-}
-@property(copy) NSString *deviceName;
-@property(copy) NSString *problem;
-- (BOOL)start;
-- (void)stop;
-@end
-
-@implementation AudioController
-- (instancetype)init {
-    if ((self = [super init])) {
-        atomic_init(&gain.target, 0.25f);
-        atomic_init(&gain.callbacks, 0);
-        atomic_init(&gain.inputPeak, 0);
-        atomic_init(&gain.outputPeak, 0);
-    }
-    return self;
-}
-- (BOOL)fail:(NSString *)operation status:(OSStatus)status {
-    self.problem = [NSString stringWithFormat:@"%@ (%d).", operation, (int)status];
-    [self stop];
-    return NO;
-}
-- (BOOL)start {
-    [self stop];
-    self.problem = nil;
-    self.deviceName = nil;
-    output = defaultOutput();
-    if (!output) return [self fail:@"No audio output found" status:-1];
-    self.deviceName = stringProperty(output, kAudioObjectPropertyName);
-    NSString *uid = stringProperty(output, kAudioDevicePropertyDeviceUID);
-    NSArray *outFormats = formats(output, kAudioDevicePropertyScopeOutput);
-    // Deliberately reject devices with input streams: their aggregate buffer layout differs.
-    if (formats(output, kAudioDevicePropertyScopeInput).count || outFormats.count != 1 || !uid.length)
-        return [self fail:@"Choose a stereo monitor or built-in speakers in Sound settings" status:-1];
-    AudioStreamBasicDescription physical = {0};
-    [outFormats.firstObject getValue:&physical];
-    if (!validFormat(physical)) return [self fail:@"This output's audio format is unsupported" status:-1];
-
-    // Exclude our own output to prevent an audio feedback loop.
+static BOOL Configure(NSString *key, NSString *value) {
+    AudioObjectID box = Lookup(@"HushAudioBox_UID", kAudioHardwarePropertyTranslateUIDToBox);
+    if (!box) return NO;
     pid_t pid = getpid();
-    AudioObjectID process = 0;
-    UInt32 size = sizeof(process);
-    AudioObjectPropertyAddress a = address(kAudioHardwarePropertyTranslatePIDToProcessObject, kAudioObjectPropertyScopeGlobal);
-    OSStatus status = AudioObjectGetPropertyData(kAudioObjectSystemObject, &a, sizeof(pid), &pid, &size, &process);
-    if (status || !process) return [self fail:@"Could not isolate app playback" status:status];
-    CATapDescription *description = [[CATapDescription alloc] initExcludingProcesses:@[@(process)] andDeviceUID:uid withStream:0];
-    description.name = @"Hush";
-    description.privateTap = YES;
-    description.muteBehavior = CATapMutedWhenTapped;
-    status = AudioHardwareCreateProcessTap(description, &tap);
-    if (status) return [self fail:@"Audio access is required. Allow Hush in System Settings" status:status];
-    AudioStreamBasicDescription tapFormat = {0};
-    status = readProperty(tap, kAudioTapPropertyFormat, kAudioObjectPropertyScopeGlobal, sizeof(tapFormat), &tapFormat);
-    if (status || !validFormat(tapFormat) || tapFormat.mSampleRate != physical.mSampleRate)
-        return [self fail:@"The monitor and audio tap formats do not match" status:status ?: -1];
-    NSDictionary *configuration = @{
-        @kAudioAggregateDeviceNameKey: @"Hush Audio",
-        @kAudioAggregateDeviceUIDKey: [@"local.hush.audio." stringByAppendingString:NSUUID.UUID.UUIDString],
-        @kAudioAggregateDeviceIsPrivateKey: @YES,
-        @kAudioAggregateDeviceMainSubDeviceKey: uid,
-        @kAudioAggregateDeviceSubDeviceListKey: @[@{@kAudioSubDeviceUIDKey: uid}],
-        @kAudioAggregateDeviceTapListKey: @[@{@kAudioSubTapUIDKey: description.UUID.UUIDString, @kAudioSubTapDriftCompensationKey: @YES}],
-        @kAudioAggregateDeviceTapAutoStartKey: @YES
-    };
-    status = AudioHardwareCreateAggregateDevice((__bridge CFDictionaryRef)configuration, &aggregate);
-    if (status) return [self fail:@"Could not connect audio processing" status:status];
-    NSArray *aggregateInputs = formats(aggregate, kAudioDevicePropertyScopeInput);
-    NSArray *aggregateOutputs = formats(aggregate, kAudioDevicePropertyScopeOutput);
-    if (aggregateInputs.count != 1 || aggregateOutputs.count != 1)
-        return [self fail:@"Unexpected audio channel layout" status:-1];
-    for (NSValue *value in [aggregateInputs arrayByAddingObjectsFromArray:aggregateOutputs]) {
-        AudioStreamBasicDescription f = {0}; [value getValue:&f];
-        if (!validFormat(f) || f.mSampleRate != physical.mSampleRate)
-            return [self fail:@"Unexpected audio processing format" status:-1];
-    }
-    gain.current = 0;
-    gain.step = 1.0f / (physical.mSampleRate * 0.02f);
-    atomic_store(&gain.callbacks, 0);
-    status = AudioDeviceCreateIOProcID(aggregate, HushRender, &gain, &proc);
-    if (status) return [self fail:@"Could not prepare audio playback" status:status];
-    status = AudioDeviceStart(aggregate, proc);
-    if (status) return [self fail:@"Could not start audio. Check audio capture permission" status:status];
-    started = YES;
-    return YES;
+    if (Set(box, kAudioObjectPropertyIdentify, kAudioObjectPropertyScopeGlobal, 0, sizeof(pid), &pid)) return NO;
+    CFStringRef s = (__bridge CFStringRef)[NSString stringWithFormat:@"%@=%@", key, value];
+    return !Set(box, kAudioObjectPropertyName, kAudioObjectPropertyScopeGlobal, 0, sizeof(s), &s);
 }
-- (void)stop {
-    if (aggregate && proc) {
-        AudioDeviceStop(aggregate, proc);
-        AudioDeviceDestroyIOProcID(aggregate, proc);
-    }
-    proc = NULL;
-    if (aggregate) AudioHardwareDestroyAggregateDevice(aggregate);
-    aggregate = 0;
-    if (tap) AudioHardwareDestroyProcessTap(tap);
-    tap = 0;
-    started = NO;
+static Float32 Volume(AudioDeviceID d) {
+    Float32 value = 0;
+    if (!Get(d, kAudioDevicePropertyVolumeScalar, kAudioDevicePropertyScopeOutput, 0, sizeof(value), &value)) return value;
+    Get(d, kAudioDevicePropertyVolumeScalar, kAudioDevicePropertyScopeOutput, 1, sizeof(value), &value);
+    return value;
 }
-- (void)dealloc { [self stop]; }
-@end
+static BOOL SetVolume(AudioDeviceID d, Float32 volume) {
+    if (!d || !isfinite(volume) || volume < 0 || volume > 1) return NO;
+    if (Writable(d, kAudioDevicePropertyVolumeScalar, 0)) return !Set(d, kAudioDevicePropertyVolumeScalar, kAudioDevicePropertyScopeOutput, 0, sizeof(volume), &volume);
+    OSStatus left = Set(d, kAudioDevicePropertyVolumeScalar, kAudioDevicePropertyScopeOutput, 1, sizeof(volume), &volume);
+    OSStatus right = Set(d, kAudioDevicePropertyVolumeScalar, kAudioDevicePropertyScopeOutput, 2, sizeof(volume), &volume);
+    return !left && !right;
+}
+static void Select(AudioDeviceID d) {
+    if (!d) return;
+    Set(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, 0, sizeof(d), &d);
+    Set(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyScopeGlobal, 0, sizeof(d), &d);
+}
+static void Status(void) {
+    AudioDeviceID p = Proxy(), d = Default();
+    Float64 meter[3] = {0};
+    if (p) sscanf(String(p, 'hmet').UTF8String, "%lf %lf %lf", &meter[0], &meter[1], &meter[2]);
+    NSDictionary *state = @{@"defaultID": @(d), @"defaultName": String(d, kAudioObjectPropertyName), @"proxyID": @(p),
+        @"readyOutputUID": p ? String(p, 'huid') : @"",
+        @"volume": @(Volume(d)), @"mute": @(Integer(d, kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput)),
+        @"inputPeak": @(meter[0]), @"outputPeak": @(meter[1]), @"callbacks": @(meter[2]), @"devices": Devices()};
+    NSData *json = [NSJSONSerialization dataWithJSONObject:state options:NSJSONWritingPrettyPrinted error:nil];
+    puts([[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding].UTF8String);
+}
 
-@interface AppDelegate : NSObject <NSApplicationDelegate>
-@property AudioController *audio;
-@property NSStatusItem *item;
-@property NSSlider *slider;
-@property NSTextField *level;
-@property NSTextField *device;
-@property NSTextField *state;
-@property NSMenuItem *toggleItem;
+@interface Hush : NSObject <NSApplicationDelegate>
 @property NSTimer *timer;
-@property BOOL enabled;
-@property BOOL muted;
-@property double volume;
+@property NSWindow *settingsWindow;
+@property NSString *routeUID;
+@property NSString *lastSystemUID;
+@property NSSet *previousUIDs;
+@property NSDictionary *pending;
+@property NSInteger attempts;
 @property BOOL sleeping;
+@property dispatch_source_t terminateSource;
 @end
-
-@implementation AppDelegate
-- (NSTextField *)label:(NSString *)text frame:(NSRect)frame font:(NSFont *)font {
-    NSTextField *label = [NSTextField labelWithString:text];
-    label.frame = frame;
-    label.font = font;
-    label.lineBreakMode = NSLineBreakByTruncatingTail;
-    return label;
+@implementation Hush
+- (void)showSettings:(id)sender {
+    if (!self.settingsWindow) {
+        self.settingsWindow = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 440, 260)
+            styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+        self.settingsWindow.title = @"Hush";
+        self.settingsWindow.releasedWhenClosed = NO;
+        NSImageView *icon = [[NSImageView alloc] initWithFrame:NSMakeRect(28, 156, 72, 72)];
+        icon.image = [NSImage imageNamed:NSImageNameApplicationIcon];
+        [self.settingsWindow.contentView addSubview:icon];
+        NSTextField *title = [NSTextField labelWithString:@"Quietly in control."];
+        title.font = [NSFont systemFontOfSize:23 weight:NSFontWeightSemibold];
+        title.frame = NSMakeRect(116, 190, 300, 30);
+        [self.settingsWindow.contentView addSubview:title];
+        NSTextField *description = [NSTextField wrappingLabelWithString:@"Use your Mac’s volume keys or system slider. Hush handles your connected audio devices automatically."];
+        description.frame = NSMakeRect(116, 120, 290, 65);
+        [self.settingsWindow.contentView addSubview:description];
+        NSTextField *hint = [NSTextField labelWithString:@"Closing this window keeps Hush running."];
+        hint.textColor = NSColor.secondaryLabelColor;
+        hint.frame = NSMakeRect(28, 78, 384, 22);
+        [self.settingsWindow.contentView addSubview:hint];
+        NSButton *remove = [NSButton buttonWithTitle:@"Uninstall Hush…" target:self action:@selector(uninstall:)];
+        remove.frame = NSMakeRect(262, 25, 150, 32);
+        [self.settingsWindow.contentView addSubview:remove];
+        [self.settingsWindow center];
+    }
+    [self.settingsWindow makeKeyAndOrderFront:nil];
+    [NSApp activateIgnoringOtherApps:YES];
 }
-- (void)applicationDidFinishLaunching:(NSNotification *)notification {
-    self.audio = [AudioController new];
-    NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:@"volume"];
-    self.volume = saved ? fmax(0, fmin(100, saved.doubleValue)) : 50;
-    self.muted = [NSUserDefaults.standardUserDefaults boolForKey:@"muted"];
-    self.item = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
-    NSMenu *menu = [NSMenu new];
-    NSView *view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 280, 114)];
-    [view addSubview:[self label:@"Hush" frame:NSMakeRect(18, 84, 185, 20) font:[NSFont boldSystemFontOfSize:13]]];
-    self.level = [self label:@"50%" frame:NSMakeRect(215, 84, 50, 20) font:[NSFont monospacedDigitSystemFontOfSize:13 weight:NSFontWeightRegular]];
-    self.level.alignment = NSTextAlignmentRight;
-    [view addSubview:self.level];
-    self.device = [self label:@"" frame:NSMakeRect(18, 62, 245, 18) font:[NSFont systemFontOfSize:11]];
-    self.device.textColor = NSColor.secondaryLabelColor;
-    [view addSubview:self.device];
-    self.slider = [NSSlider sliderWithValue:self.volume minValue:0 maxValue:100 target:self action:@selector(changeVolume:)];
-    self.slider.frame = NSMakeRect(18, 32, 246, 25);
-    self.slider.continuous = YES;
-    self.slider.accessibilityLabel = @"Monitor volume";
-    [view addSubview:self.slider];
-    self.state = [self label:@"Starting…" frame:NSMakeRect(18, 8, 246, 18) font:[NSFont systemFontOfSize:11]];
-    self.state.textColor = NSColor.secondaryLabelColor;
-    [view addSubview:self.state];
-    NSMenuItem *custom = [NSMenuItem new];
-    custom.view = view;
-    [menu addItem:custom];
-    [menu addItem:NSMenuItem.separatorItem];
-    NSMenuItem *mute = [[NSMenuItem alloc] initWithTitle:@"Mute / Unmute" action:@selector(toggleMute:) keyEquivalent:@""];
-    mute.target = self;
-    [menu addItem:mute];
-    self.toggleItem = [[NSMenuItem alloc] initWithTitle:@"Pause volume control" action:@selector(toggle:) keyEquivalent:@""];
-    self.toggleItem.target = self;
-    [menu addItem:self.toggleItem];
-    NSMenuItem *retry = [[NSMenuItem alloc] initWithTitle:@"Reconnect audio" action:@selector(reconnect:) keyEquivalent:@""];
-    retry.target = self;
-    [menu addItem:retry];
-    NSMenuItem *settings = [[NSMenuItem alloc] initWithTitle:@"Audio access settings…" action:@selector(settings:) keyEquivalent:@""];
-    settings.target = self;
-    [menu addItem:settings];
-    [menu addItem:NSMenuItem.separatorItem];
-    NSMenuItem *quit = [[NSMenuItem alloc] initWithTitle:@"Quit — restore original audio" action:@selector(terminate:) keyEquivalent:@"q"];
-    [menu addItem:quit];
-    self.item.menu = menu;
-    [self updateGain];
-    self.enabled = YES;
-    [self.audio start];
-    [self updateUI];
-    self.timer = [NSTimer timerWithTimeInterval:1 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
-    [NSRunLoop.mainRunLoop addTimer:self.timer forMode:NSRunLoopCommonModes];
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)app hasVisibleWindows:(BOOL)visible {
+    [self showSettings:nil]; return YES;
+}
+- (void)uninstall:(id)sender {
+    NSAlert *confirm = [NSAlert new];
+    confirm.messageText = @"Uninstall Hush?";
+    confirm.informativeText = @"This removes Hush, its audio driver, and automatic startup. Audio will pause briefly and return to your device’s hardware volume. Pause playback before continuing.";
+    [confirm addButtonWithTitle:@"Cancel"];
+    [confirm addButtonWithTitle:@"Uninstall"];
+    confirm.showsSuppressionButton = YES;
+    confirm.suppressionButton.title = @"Also delete saved settings and backups";
+    if ([confirm runModal] != NSAlertSecondButtonReturn) return;
+    NSString *script = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"Uninstaller/launch-uninstall.sh"];
+    AuthorizationRef authorization = NULL;
+    OSStatus result = AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment, kAuthorizationFlagDefaults, &authorization);
+    if (result == errAuthorizationSuccess) {
+        char *arguments[] = {(char *)script.fileSystemRepresentation,
+            confirm.suppressionButton.state == NSControlStateValueOn ? "--purge" : NULL, NULL};
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        result = AuthorizationExecuteWithPrivileges(authorization, "/bin/bash", kAuthorizationFlagDefaults, arguments, NULL);
+#pragma clang diagnostic pop
+        AuthorizationFree(authorization, kAuthorizationFlagDefaults);
+    }
+    if (result != errAuthorizationSuccess && result != errAuthorizationCanceled) {
+        NSAlert *error = [NSAlert new]; error.messageText = @"Hush couldn’t start uninstalling.";
+        error.informativeText = @"Administrator authorization was not completed. Hush is still installed.";
+        [error runModal];
+    }
+}
+
+- (void)applicationDidFinishLaunching:(NSNotification *)note {
+    [NSDistributedNotificationCenter.defaultCenter addObserver:self selector:@selector(showSettings:) name:@"local.hush.showSettings" object:nil];
+    if (![NSProcessInfo.processInfo.arguments containsObject:@"--background"]) [self showSettings:nil];
+    signal(SIGTERM, SIG_IGN);
+    self.terminateSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(self.terminateSource, ^{ [NSApplication.sharedApplication terminate:nil]; });
+    dispatch_resume(self.terminateSource);
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(sleep:) name:NSWorkspaceWillSleepNotification object:nil];
     [NSWorkspace.sharedWorkspace.notificationCenter addObserver:self selector:@selector(wake:) name:NSWorkspaceDidWakeNotification object:nil];
+    self.routeUID = [NSUserDefaults.standardUserDefaults stringForKey:@"lastOutputUID"];
+    [self tick:nil];
+    self.timer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(tick:) userInfo:nil repeats:YES];
 }
-- (void)updateGain {
-    // Quadratic taper gives finer control at quiet listening levels.
-    atomic_store(&self.audio->gain.target, self.muted ? 0 : powf(self.volume / 100.0f, 2));
-    [NSUserDefaults.standardUserDefaults setDouble:self.volume forKey:@"volume"];
-    [NSUserDefaults.standardUserDefaults setBool:self.muted forKey:@"muted"];
-}
-- (void)updateUI {
-    self.level.stringValue = self.muted ? @"Muted" : [NSString stringWithFormat:@"%.0f%%", self.volume];
-    self.slider.doubleValue = self.volume;
-    self.slider.enabled = self.audio->started;
-    self.device.stringValue = self.audio.deviceName ?: @"No output";
-    self.state.stringValue = !self.enabled ? @"Paused · original audio volume" : self.audio.problem ?: (atomic_load(&self.audio->gain.callbacks) ? @"Volume control on" : @"Waiting for audio / audio permission…");
-    self.state.toolTip = self.audio.problem;
-    self.toggleItem.title = self.enabled ? @"Pause volume control" : @"Enable volume control";
-    NSString *symbol = !self.audio->started ? @"speaker.badge.exclamationmark" : (self.muted || self.volume == 0 ? @"speaker.slash.fill" : @"speaker.wave.2.fill");
-    self.item.button.image = [NSImage imageWithSystemSymbolName:symbol accessibilityDescription:@"Hush"];
-    self.item.button.image.template = YES;
-    self.item.button.toolTip = [NSString stringWithFormat:@"Hush · %@ · %@", self.level.stringValue, self.device.stringValue];
-}
-- (void)changeVolume:(NSSlider *)sender { self.volume = sender.doubleValue; self.muted = NO; [self updateGain]; [self updateUI]; }
-- (void)toggleMute:(id)sender { self.muted = !self.muted; [self updateGain]; [self updateUI]; }
-- (void)toggle:(id)sender { self.enabled = !self.enabled; if (self.enabled) [self.audio start]; else [self.audio stop]; [self updateUI]; }
-- (void)reconnect:(id)sender { self.enabled = YES; [self.audio start]; [self updateUI]; }
-- (void)settings:(id)sender { [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture"]]; }
-- (void)tick:(id)sender {
-    if (!self.sleeping && self.enabled && self.audio->output != defaultOutput()) [self.audio start];
-    [self updateUI];
-    // Optional development telemetry contains only numeric levels, never audio.
-    NSArray *args = NSProcessInfo.processInfo.arguments;
-    NSUInteger index = [args indexOfObject:@"--diagnostics"];
-    if (index != NSNotFound && index + 1 < args.count) {
-        NSDictionary *status = @{@"running": @(self.audio->started), @"device": self.audio.deviceName ?: @"",
-            @"error": self.audio.problem ?: @"", @"callbacks": @(atomic_load(&self.audio->gain.callbacks)),
-            @"inputPeak": @(atomic_load(&self.audio->gain.inputPeak)), @"outputPeak": @(atomic_load(&self.audio->gain.outputPeak)),
-            @"gain": @(atomic_load(&self.audio->gain.target)), @"volume": @(self.volume)};
-        [[NSJSONSerialization dataWithJSONObject:status options:NSJSONWritingPrettyPrinted error:nil] writeToFile:args[index + 1] atomically:YES];
+- (void)remember {
+    AudioDeviceID p = Proxy();
+    if (p && self.routeUID && Default() == p && !self.pending) {
+        [NSUserDefaults.standardUserDefaults setFloat:Volume(p) forKey:[@"volume:" stringByAppendingString:self.routeUID]];
+        [NSUserDefaults.standardUserDefaults setBool:Integer(p, kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput) forKey:[@"mute:" stringByAppendingString:self.routeUID]];
     }
 }
-- (void)sleep:(id)sender { self.sleeping = YES; [self.audio stop]; }
-- (void)wake:(id)sender { self.sleeping = NO; if (self.enabled) [self.audio start]; [self updateUI]; }
-- (void)applicationWillTerminate:(NSNotification *)notification { [self.audio stop]; }
+- (void)tick:(id)sender {
+    if (self.sleeping) return;
+    [self remember];
+    NSArray *devices = Devices();
+    AudioDeviceID p = Proxy();
+    NSString *systemUID = String(Default(), kAudioDevicePropertyDeviceUID);
+    NSSet *uids = [NSSet setWithArray:[devices valueForKey:@"uid"]];
+    if (self.pending) {
+        BOOL manualChange = ![systemUID isEqualToString:self.lastSystemUID] && ![systemUID isEqualToString:proxyUID];
+        if (![uids containsObject:self.pending[@"uid"]] || manualChange || ++self.attempts > 20) {
+            self.pending = nil;
+            self.routeUID = nil;
+        } else if ([String(p, 'huid') isEqualToString:self.pending[@"uid"]]) {
+            self.routeUID = self.pending[@"uid"];
+            NSString *key = [@"volume:" stringByAppendingString:self.routeUID];
+            NSNumber *saved = [NSUserDefaults.standardUserDefaults objectForKey:key];
+            NSDictionary *legacy = [NSUserDefaults.standardUserDefaults persistentDomainForName:@"local.krupa.MonitorVolume"];
+            double oldLevel = [legacy[@"volume"] doubleValue] / 100.0;
+            Float32 migrated = oldLevel > 0 ? fmaxf(0, fminf(1, (10 * log10(oldLevel * oldLevel) + 25) / 25)) : 0;
+            Float32 level = saved ? saved.floatValue : (legacy[@"volume"] ? migrated : 0.30f);
+            SetVolume(p, level);
+            UInt32 muted = saved ? [NSUserDefaults.standardUserDefaults boolForKey:[@"mute:" stringByAppendingString:self.routeUID]] : [legacy[@"muted"] boolValue];
+            Set(p, kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput, 0, sizeof(muted), &muted);
+            Select(p);
+            self.pending = nil;
+            [NSUserDefaults.standardUserDefaults setObject:self.routeUID forKey:@"lastOutputUID"];
+        }
+        if (self.pending) { self.previousUIDs = uids; self.lastSystemUID = String(Default(), kAudioDevicePropertyDeviceUID); return; }
+    }
+    // Respect an intentionally chosen virtual or unsupported output rather than taking it over.
+    if (Default() && Default() != p && ![uids containsObject:systemUID]) {
+        self.routeUID = nil; self.previousUIDs = uids; self.lastSystemUID = systemUID; return;
+    }
+    NSDictionary *choice = HushChooseRoute(devices, self.previousUIDs, self.routeUID, systemUID, self.lastSystemUID,
+        [NSUserDefaults.standardUserDefaults stringForKey:@"lastOutputUID"]);
+    if (choice) {
+        AudioDeviceID target = [choice[@"id"] unsignedIntValue];
+        BOOL native = [choice[@"native"] boolValue];
+        if (native) {
+            self.routeUID = choice[@"uid"];
+            if (Default() != target || Integer(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyScopeGlobal) != target) Select(target);
+            [NSUserDefaults.standardUserDefaults setObject:self.routeUID forKey:@"lastOutputUID"];
+        } else if (p && (Default() != p || ![self.routeUID isEqualToString:choice[@"uid"]] || ![String(p, 'huid') isEqualToString:choice[@"uid"]])) {
+            // Configure first. Switch the default only after the driver confirms the target is ready.
+            if (Configure(@"outputDevice", choice[@"uid"])) {
+                Configure(@"deviceName", [NSString stringWithFormat:@"%@ (Hush)", choice[@"name"]]);
+                Configure(@"outputDeviceActiveCondition", @"0");
+                self.pending = choice;
+                self.attempts = 0;
+            }
+        }
+    }
+    self.previousUIDs = uids;
+    self.lastSystemUID = String(Default(), kAudioDevicePropertyDeviceUID);
+}
+- (void)sleep:(id)sender { [self remember]; self.sleeping = YES; }
+- (void)wake:(id)sender { self.sleeping = NO; self.previousUIDs = nil; self.pending = nil; [self tick:nil]; }
+- (void)applicationWillTerminate:(NSNotification *)note {
+    [self remember];
+    // The driver continues audio independently; do not jump to full physical volume on agent exit.
+}
 @end
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
-        if (argc > 1 && strcmp(argv[1], "--inspect") == 0) {
-            AudioDeviceID device = defaultOutput();
-            printf("Default output: %u %s\n", device, stringProperty(device, kAudioObjectPropertyName).UTF8String);
-            for (NSValue *value in formats(device, kAudioDevicePropertyScopeOutput)) {
-                AudioStreamBasicDescription f; [value getValue:&f];
-                printf("%.0f Hz, %u channels, %u bits, format %u, flags %u; supported: %s\n", f.mSampleRate, f.mChannelsPerFrame, f.mBitsPerChannel, f.mFormatID, f.mFormatFlags, validFormat(f) ? "yes" : "no");
+        if (argc > 1 && strcmp(argv[1], "--background") != 0) {
+            NSString *command = @(argv[1]);
+            if ([command isEqualToString:@"--status"] || [command isEqualToString:@"--inspect"]) { Status(); return 0; }
+            if ([command isEqualToString:@"--volume"] && argc == 3) return SetVolume(Default(), atof(argv[2])) ? 0 : 1;
+            if ([command isEqualToString:@"--mute"] && argc == 3) {
+                UInt32 mute = atoi(argv[2]) != 0;
+                return Set(Default(), kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput, 0, sizeof(mute), &mute) ? 1 : 0;
             }
-            return device ? 0 : 1;
+            if ([command isEqualToString:@"--output"] && argc == 3) {
+                AudioDeviceID d = Lookup(@(argv[2]), kAudioHardwarePropertyTranslateUIDToDevice);
+                if (!d) return 1;
+                Select(d); return 0;
+            }
+            fputs("Usage: Hush [--status | --volume 0..1 | --mute 0|1 | --output DEVICE_UID]\n", stderr); return 2;
         }
-        // One controller per login session, even if opened again manually.
-        NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
-        for (NSRunningApplication *other in [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleID ?: @"local.hush.Hush"]) {
-            if (other.processIdentifier != getpid()) return 0;
-        }
+        for (NSRunningApplication *other in [NSRunningApplication runningApplicationsWithBundleIdentifier:NSBundle.mainBundle.bundleIdentifier ?: @"local.hush.Hush"])
+            if (other.processIdentifier != getpid()) {
+                if (argc == 1) [NSDistributedNotificationCenter.defaultCenter postNotificationName:@"local.hush.showSettings" object:nil];
+                return 0;
+            }
         NSApplication *app = NSApplication.sharedApplication;
         [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
-        AppDelegate *delegate = [AppDelegate new];
-        app.delegate = delegate;
+        Hush *delegate = [Hush new]; app.delegate = delegate;
         [app run];
     }
-    return 0;
 }

@@ -1,82 +1,56 @@
-# Hush
+<p align="center"><img src="assets/Hush.png" width="112" alt="Hush icon"></p>
+<h1 align="center">Hush</h1>
+<p align="center">Your Mac’s volume controls, for your monitor.</p>
 
-**A little less loud.**
+Monitor volume grayed out on your Mac? Hush lets you adjust it with the volume keys and the macOS Sound slider. No extra menu-bar slider.
 
-Hush adds a volume slider to your Mac’s menu bar for stereo HDMI outputs that macOS cannot adjust. Click the speaker icon, set a comfortable level, and get back to what you were listening to.
+<p align="center"><img src="assets/screenshots/macos-volume-control.png" width="480" alt="macOS Sound panel with DELL S3221QS (Hush) selected and the system volume slider available."></p>
 
-- System audio volume and mute, including browser playback.
-- Remembers your level between launches.
-- Optional automatic launch at login.
-- Native Objective-C and Core Audio. No third-party libraries or audio driver installation.
-- Audio stays on your Mac. No recordings, accounts, analytics, or network requests.
+## Install
 
-**Status: early beta, built from source.** Confirmed working with a Dell S3221QS over HDMI on Apple Silicon running macOS 26.6.2. Other hardware and older supported macOS versions need testing.
+Requires **macOS 14.4 or newer**.
 
-## Requirements
+1. Open the **Hush `.pkg` installer**.
+2. Follow the prompts and enter your Mac administrator password when asked.
+3. Hush starts automatically, including after you restart your Mac.
 
-- macOS 14.4 or later.
-- Xcode Command Line Tools with a macOS 14.4+ SDK (`xcode-select --install`).
-- An output-only device exposing one stereo Float32 stream, such as a compatible HDMI monitor.
+Pause playback or calls before installing—audio restarts briefly.
 
-Duplex USB interfaces, multichannel outputs, and other sample formats are currently unsupported. DisplayPort devices may work if they expose the required format; they have not been verified. Keyboard volume keys and per-app sliders are not included.
-
-## Build and install
-
-Download or clone this repository, open Terminal in its folder, then run:
-
-```sh
-zsh test.sh
-zsh scripts/install.sh --login
-open "$HOME/Applications/Hush.app"
-```
-
-Omit `--login` if you prefer opening Hush manually. Installation uses your personal Applications folder and does not require administrator access. The installer refuses to overwrite an existing app; quit an older Hush and move it to Trash before upgrading.
-
-When macOS asks, allow **System Audio Recording Only**. Hush uses that permission to process live output audio; it does not record audio to a file or access the microphone or screen. If audio does not start after granting permission, choose **Reconnect audio** from Hush’s menu.
-
-For development without installation:
-
-```sh
-zsh build.sh
-open build/Hush.app
-```
-
-Builds are locally ad-hoc signed, not Developer ID signed or notarized for distribution. Rebuilding or changing the bundle identity may require granting audio permission again. Run only one build of Hush at a time.
+**This is an experimental source release.** There is no notarized public download yet. If you don’t already have an installer, follow [Build from source](#build-from-source) below.
 
 ## Use
 
-Click the speaker icon in the menu bar and drag the slider. Use **Mute / Unmute** to silence playback without losing your saved level. Hush has no Dock icon or main window.
+1. Open **Control Center → Sound**.
+2. Select your monitor’s **(Hush)** output, as shown above.
+3. Adjust volume with your keyboard or the Sound slider. Mute works too.
 
-The slider has a perceptual taper: 50% applies one-quarter signal amplitude, giving finer control at quiet levels. **Pause volume control** or **Quit — restore original audio** removes attenuation, so sound returns to the output’s original volume.
+Hush automatically handles supported output changes. Headphones and speakers with their own native volume controls use their normal output. Open **Hush** from Applications for its settings window; you can close the window and keep using volume control.
 
-Manage automatic login launch:
+At 100%, Hush sends audio without attenuation. Your monitor’s own volume setting still affects how loud it gets.
 
-```sh
-zsh scripts/login.sh enable
-zsh scripts/login.sh status
-zsh scripts/login.sh disable
-```
+## Uninstall
 
-Login launch happens after you sign in, not before the login screen. Quitting Hush keeps it closed until you open it or log in again. To uninstall, disable login launch, quit Hush, and move `~/Applications/Hush.app` to Trash. Settings are stored under `local.hush.Hush`.
+Open **Hush** from Applications and click **Uninstall Hush…**. Confirm removal and authorize with your Mac password. You can also choose to delete saved settings.
 
-## Troubleshooting
+Pause playback first: audio returns to your device’s hardware volume. Use the built-in uninstaller—moving the app to Trash alone leaves its audio driver installed.
 
-- **No sound:** check System Settings → Privacy & Security → Screen & System Audio Recording → System Audio Recording Only. Allow Hush, then reconnect audio.
-- **Unsupported output:** select a compatible stereo output in Sound settings. Hush leaves unsupported outputs unprocessed.
-- **Audio stops after changing devices or formats:** choose Reconnect audio. Device changes and wake are handled, but reconnect and permission recovery need wider testing.
-- **Missing icon:** check whether other menu bar items hide it, then open the app again.
-- **Protected playback:** DRM-protected audio has not been verified.
+## Build from source
 
-Include the output model, connection type, macOS version, and Hush version when reporting a problem. The read-only device inspector can help:
+Install Xcode Command Line Tools, then run these commands from the Hush source folder:
 
 ```sh
-build/Hush.app/Contents/MacOS/Hush --inspect
+zsh scripts/check.sh
+zsh scripts/install.sh
 ```
 
-## Development
+This checks the code, builds Hush, and opens the installer. Builds target your Mac’s architecture. Local installers use ad-hoc signatures and are not notarized.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and review expectations, [architecture](docs/ARCHITECTURE.md) for the audio path, and the [release checklist](docs/RELEASING.md) for publishing.
+## Compatibility and development
 
-GitHub Actions builds the app and runs sanitizer-backed audio tests. CI does not substitute for testing with physical audio hardware. The supported minimum OS is an API target, not a claim that every OS/hardware combination has been tested.
+Hush currently supports fixed-volume stereo PCM outputs, including compatible HDMI monitors. Hardware coverage is limited; Bluetooth, reconnect, sleep/wake, and the latest routing fix still need broader installed testing. Multichannel and encoded passthrough audio are not supported.
 
-[MIT licensed](LICENSE). See [SECURITY.md](SECURITY.md) for security reporting guidance.
+[Contributing](CONTRIBUTING.md) · [Technical details](docs/ARCHITECTURE.md) · [Release validation](docs/RELEASING.md) · [Security](SECURITY.md)
+
+## License
+
+Hush’s original code and artwork are [MIT licensed](LICENSE). The adapted Proxy Audio Device driver is under the Unlicense, with Apple utility sources retaining their own notices. See [third-party notices](THIRD_PARTY_NOTICES.md).

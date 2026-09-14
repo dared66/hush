@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report an audio or menu bar problem
+about: Report an audio, routing, or installation problem
 title: ''
 labels: bug
 ---
@@ -16,10 +16,11 @@ labels: bug
 - macOS version:
 - Mac model / architecture:
 - Output device and connection (HDMI, DisplayPort, etc.):
-- System Audio Recording Only permission enabled:
+- Installation method (source build / package):
 
 **Checks**
-- Does Reconnect audio help?
-- Does quitting Hush restore normal playback?
+- Is the physical output or its Hush output selected?
+- Does opening Hush work?
+- Did this begin after login, an upgrade, or reconnecting a device?
 
 Include only relevant, reviewed diagnostic output. Do not upload recordings or private information.

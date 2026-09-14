@@ -1,20 +1,33 @@
-# Publishing Hush
+# Release preparation
 
-## Source repository
+## Source releases
 
-1. Publish only this project directory, never its parent workspace. Do not include `build/`, `dist/`, diagnostics, or local preferences.
-2. Confirm the MIT license and project name fit the intended release. The name has not been checked for trademark or app-store availability.
-3. Create the public repository, enable private vulnerability reporting, and add a verified maintainer contact to SECURITY.md.
-4. Run `zsh scripts/check.sh` and `zsh scripts/package-source.sh`. Inspect the generated source archive.
-5. Confirm GitHub Actions passes after pushing. Record hardware smoke tests using CONTRIBUTING.md.
-6. Review version fields in Info.plist and CHANGELOG.md before creating a tag. Describe known limitations in release notes.
+1. Run `zsh scripts/check.sh` on Apple silicon and Intel macOS runners.
+2. Run `zsh scripts/package-installer.sh` and `zsh scripts/check-package.sh`.
+3. Run `zsh scripts/package-source.sh`. Extract the archive into a fresh directory and run its checks.
+4. Review the archive for credentials, device identifiers, local paths, generated binaries, and filesystem metadata.
+5. Update the changelog and record hardware validation below before tagging a release.
+
+`Info.plist` is the version source for the app, packaged driver, installer, and archive. Packaging does not install anything or publish releases. CI builds locally signed artifacts without publishing them.
 
 ## Binary releases
 
-Local builds are ad-hoc signed. Before offering binaries to general users, configure a maintainer-owned bundle identifier and Developer ID signing, notarize with Apple, and verify the downloaded artifact on a clean Mac. Keep signing credentials in the hosting service’s secret store, never in this repository.
+Local build scripts use ad-hoc signatures. A consumer binary release needs a maintainer-owned signing and notarization process, with signatures verified on the app, nested helper, driver, and installer. Signing credentials must never enter the source tree. That release pipeline is not implemented here.
 
-The build currently targets the host architecture. Produce and test a universal binary or clearly label separate Apple Silicon and Intel builds. Do not label an architecture or older macOS release as tested based only on cross-compilation. Binary signing, notarization, automatic updates, and release uploads are not automated here.
+The integrated uninstaller currently uses the deprecated `AuthorizationExecuteWithPrivileges` API. Modernizing that authorization mechanism and validating it on supported macOS versions remain binary-release work. Source availability does not imply production readiness.
 
-## Earlier local prototype
+## Hardware validation record
 
-This source version uses `local.hush.Hush`. Early private builds used a different identity and login launcher. Before migrating one of those installations, quit the old app and disable its old login launcher to avoid two audio controllers. Existing audio permissions and volume preferences do not automatically migrate across bundle identifiers. Public install scripts intentionally do not alter unrelated apps or launch agents.
+Automated checks cover routing policy, driver custom-property registration and types, and an unavailable driver’s empty ready UID. They do not establish successful installation, audio playback, or uninstall behavior.
+
+Before a binary release, record OS version, architecture, hardware, result, and date for:
+
+- Clean install and upgrade; exactly one Hush app in Applications.
+- Login, reboot, audio-service restart, and opening/closing the settings window.
+- Selecting both the physical monitor and its Hush output; stable selection over time.
+- Slider, volume keys, mute, and 100% unity gain using controlled audio.
+- USB/Bluetooth connection, unplug fallback, reconnect, and sleep/wake.
+- Uninstall cancellation, authorization cancellation, complete removal, optional settings deletion, and audio restoration failure with recovery.
+- Separate user sessions and reinstall after removal.
+
+Current local observations: playback through an HDMI monitor was restored after restarting the agent in 0.3.1. The 0.3.2 UID correction builds and passes automated checks; its installed hardware behavior and the integrated privileged uninstall are not yet end-to-end verified. Do not label them verified based on preflight alone.
