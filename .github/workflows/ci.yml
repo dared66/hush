@@ -65,6 +65,10 @@ jobs:
 
           Experimental build: the installer is ad-hoc signed, not notarized, so macOS may block it pending explicit approval. Installation briefly restarts audio and requires an administrator password.
 
+          If blocked as an unidentified developer: try opening Hush.pkg, then use **System Settings → Privacy & Security → Open Anyway**, confirm, and continue. Do not disable Gatekeeper globally. Managed Macs may prohibit approval; updates may ask again.
+
+          Hush is free; users do not need an Apple Developer membership. Read the [installation and signing FAQ](https://github.com/dared66/hush#if-macos-blocks-the-installer) for why the project is unnotarized and what has not yet been tested.
+
           Version: $version · Commit: $GITHUB_SHA
           Automated build, routing, driver, and installer checks passed. These do not replace hardware testing.
           EOF
