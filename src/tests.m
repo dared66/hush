@@ -3,10 +3,10 @@
 #include <assert.h>
 
 static NSDictionary *Device(NSString *uid, BOOL builtin, int rank) {
-    return @{@"uid":uid, @"builtin":@(builtin), @"rank":@(rank)};
+    return @{@"uid":uid, @"builtin":@(builtin), @"rank":@(rank), @"native":@(builtin || rank >= 30)};
 }
 static NSString *Pick(NSArray *devices, NSSet *previous, NSString *current, NSString *system, NSString *last, NSString *saved) {
-    return HushChooseRoute(devices, previous, current, system, last, saved)[@"uid"];
+    return HushChooseRoute(devices, previous, current, system, last, saved, nil)[@"uid"];
 }
 int main(void) {
     @autoreleasepool {
@@ -23,6 +23,16 @@ int main(void) {
         assert([Pick(all,known,@"headphones",@"monitor",@"headphones",nil) isEqual:@"monitor"]);
         assert(Pick(@[],known,@"monitor",@"Hush",@"Hush",@"monitor")==nil);
         assert([Pick(all,nil,@"monitor",@"Hush",nil,@"monitor") isEqual:@"monitor"]);
-        puts("PASS: startup, stable routing, explicit output selection, headphone hotplug, priority, unplug fallback, reconnect, empty device list and saved route.");
+        // Selecting the proxy must select its real destination, not the last speaker.
+        NSString *proxy = @"HushAudioDevice_UID";
+        assert([HushChooseRoute(all, known, @"speaker", proxy, @"speaker", @"speaker", @"monitor")[@"uid"] isEqual:@"monitor"]);
+        assert([HushChooseRoute(all, known, @"usb", proxy, @"usb", @"usb", @"monitor")[@"uid"] isEqual:@"monitor"]);
+        assert([HushChooseRoute(all, nil, @"speaker", proxy, nil, @"speaker", @"monitor")[@"uid"] isEqual:@"monitor"]);
+        assert([HushChooseRoute(all, known, @"speaker", proxy, proxy, @"speaker", @"monitor")[@"uid"] isEqual:@"monitor"]);
+        assert([HushChooseRoute(all, known, @"monitor", @"speaker", proxy, @"monitor", @"monitor")[@"uid"] isEqual:@"speaker"]);
+        assert([HushChooseRoute(@[speaker], known, @"monitor", proxy, @"speaker", @"monitor", @"monitor")[@"uid"] isEqual:@"speaker"]);
+        assert([HushChooseRoute(all, known, @"speaker", proxy, @"speaker", @"speaker", @"")[@"uid"] isEqual:@"speaker"]);
+        assert([HushChooseRoute(all, [NSSet setWithArray:@[@"speaker", @"monitor", @"usb"]], @"monitor", proxy, proxy, @"monitor", @"monitor")[@"uid"] isEqual:@"headphones"]);
+        puts("PASS: direct proxy selection, startup with proxy selected, stale proxy destination fallback, stable routing, explicit output selection, headphone hotplug, priority, unplug fallback, reconnect, empty device list and saved route.");
     }
 }

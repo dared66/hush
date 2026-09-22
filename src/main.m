@@ -201,7 +201,7 @@ static void Status(void) {
 }
 - (void)remember {
     AudioDeviceID p = Proxy();
-    if (p && self.routeUID && Default() == p && !self.pending) {
+    if (p && self.routeUID && Default() == p && !self.pending && [String(p, 'huid') isEqualToString:self.routeUID]) {
         [NSUserDefaults.standardUserDefaults setFloat:Volume(p) forKey:[@"volume:" stringByAppendingString:self.routeUID]];
         [NSUserDefaults.standardUserDefaults setBool:Integer(p, kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput) forKey:[@"mute:" stringByAppendingString:self.routeUID]];
     }
@@ -240,7 +240,7 @@ static void Status(void) {
         self.routeUID = nil; self.previousUIDs = uids; self.lastSystemUID = systemUID; return;
     }
     NSDictionary *choice = HushChooseRoute(devices, self.previousUIDs, self.routeUID, systemUID, self.lastSystemUID,
-        [NSUserDefaults.standardUserDefaults stringForKey:@"lastOutputUID"]);
+        [NSUserDefaults.standardUserDefaults stringForKey:@"lastOutputUID"], String(p, 'huid'));
     if (choice) {
         AudioDeviceID target = [choice[@"id"] unsignedIntValue];
         BOOL native = [choice[@"native"] boolValue];
@@ -248,6 +248,11 @@ static void Status(void) {
             self.routeUID = choice[@"uid"];
             if (Default() != target || Integer(kAudioObjectSystemObject, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioObjectPropertyScopeGlobal) != target) Select(target);
             [NSUserDefaults.standardUserDefaults setObject:self.routeUID forKey:@"lastOutputUID"];
+        } else if (p && Default() == p && [String(p, 'huid') isEqualToString:choice[@"uid"]]) {
+            // Adopt a directly selected, already-ready proxy without resetting its volume.
+            self.routeUID = choice[@"uid"];
+            [NSUserDefaults.standardUserDefaults setObject:self.routeUID forKey:@"lastOutputUID"];
+            [self remember];
         } else if (p && (Default() != p || ![self.routeUID isEqualToString:choice[@"uid"]] || ![String(p, 'huid') isEqualToString:choice[@"uid"]])) {
             // Configure first. Switch the default only after the driver confirms the target is ready.
             if (Configure(@"outputDevice", choice[@"uid"])) {
