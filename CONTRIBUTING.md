@@ -1,6 +1,6 @@
 # Contributing
 
-Use macOS 14.4 or newer with Xcode Command Line Tools. Run `zsh scripts/check.sh` before submitting a change. It builds the app and driver and runs routing tests with sanitizers plus driver property checks, without installing a driver or requiring administrator access.
+Use an Apple silicon Mac running macOS 14.4 or newer with Xcode Command Line Tools. Run `zsh scripts/check.sh` before submitting a change. It builds the app and driver and runs routing tests with sanitizers plus driver property checks, without installing a driver or requiring administrator access.
 
 The Objective-C app is in `src/main.m`; routing policy is in `src/RoutePolicy.h`. The adapted HAL driver is in `driver/`, installation scripts in `installer/`, and built-in removal helpers in `uninstaller/`. The icon is generated from `scripts/render-icons.swift` with `zsh scripts/build-icons.sh`.
 

@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, macos-15-intel, macos-26]
+        os: [macos-15, macos-26]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Build universal installer
+      - name: Build Apple silicon installer
         run: zsh scripts/package-installer.sh
       - name: Publish this commit's installer
         shell: bash
@@ -60,7 +60,7 @@ jobs:
           cat > dist/release-notes.md <<EOF
           Download **Hush.pkg**, open it, and follow the installer. No build tools needed.
 
-          One installer supports Apple silicon and Intel Macs running macOS 14.4 or newer.
+          Supports Apple silicon Macs running macOS 14.4 or newer.
           After installation, use Control Center → Sound and select your monitor's **(Hush)** output.
 
           Experimental build: the installer is ad-hoc signed, not notarized, so macOS may block it pending explicit approval. Installation briefly restarts audio and requires an administrator password.

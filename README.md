@@ -4,7 +4,7 @@
 
 Can’t change your monitor’s volume from your Mac? Hush lets you use your keyboard’s volume keys and the macOS Sound slider.
 
-**[Download Hush](https://github.com/dared66/hush/releases/latest/download/Hush.pkg)** · Free and open source · macOS 14.4+ · Apple silicon & Intel
+**[Download Hush](https://github.com/dared66/hush/releases/latest/download/Hush.pkg)** · Free and open source · macOS 14.4+ · Apple silicon
 
 <p align="center"><img src="assets/screenshots/macos-volume-control.png" width="480" alt="macOS Sound panel with the monitor’s Hush output selected and volume control available."></p>
 

@@ -1,6 +1,6 @@
 # Installation help
 
-[Download Hush.pkg](https://github.com/dared66/hush/releases/latest/download/Hush.pkg) for macOS 14.4 or newer, on Apple silicon or Intel. Open it and follow the installer. Installation requires administrator authorization and briefly restarts audio.
+[Download Hush.pkg](https://github.com/dared66/hush/releases/latest/download/Hush.pkg) for macOS 14.4 or newer, on Apple silicon. Open it and follow the installer. Installation requires administrator authorization and briefly restarts audio.
 
 ## If macOS blocks the installer
 
@@ -38,7 +38,7 @@ zsh scripts/check.sh
 zsh scripts/install.sh
 ```
 
-This checks the code, builds Hush, and opens the installer. The installer supports both Apple silicon and Intel. Local installers use ad-hoc signatures and are not notarized.
+This checks the code, builds Hush, and opens the installer. The installer supports Apple silicon Macs. Local installers use ad-hoc signatures and are not notarized.
 
 
 ## Compatibility

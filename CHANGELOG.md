@@ -7,6 +7,8 @@
 
 ## 0.3.4
 
+- Builds and tests for Apple silicon only; Intel Macs are no longer supported.
+
 - Recovers audio automatically when clock drift or a discontinuity strands playback outside the audio buffer, without changing the selected output or volume.
 - Requires fresh audio before resynchronizing so a stalled or stopped source cannot loop old sound.
 - Keeps other apps playing when one audio client starts or stops, and synchronizes shared stream state.

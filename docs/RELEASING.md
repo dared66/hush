@@ -2,13 +2,13 @@
 
 ## Source releases
 
-1. Run `zsh scripts/check.sh` on Apple silicon and Intel macOS runners.
+1. Run `zsh scripts/check.sh` on the Apple silicon macOS runners.
 2. Run `zsh scripts/package-installer.sh` and `zsh scripts/check-package.sh`.
 3. Run `zsh scripts/package-source.sh`. Extract the archive into a fresh directory and run its checks.
 4. Review the archive for credentials, device identifiers, local paths, generated binaries, and filesystem metadata.
 5. Update the changelog and record hardware validation below before tagging a release.
 
-`Info.plist` is the version source for the app, packaged driver, installer, and archive. Local packaging does not install or publish anything. Every push to `main` that passes the macOS check matrix publishes a universal `Hush.pkg` and SHA-256 checksum in its own GitHub Release. Releases use unique workflow-run tags, so repeated app versions do not overwrite earlier installers. Only the current main commit is marked latest; the README points to its stable asset URL. Pull requests never publish.
+`Info.plist` is the version source for the app, packaged driver, installer, and archive. Local packaging does not install or publish anything. Every push to `main` that passes the macOS check matrix publishes an Apple silicon `Hush.pkg` and SHA-256 checksum in its own GitHub Release. Releases use unique workflow-run tags, so repeated app versions do not overwrite earlier installers. Only the current main commit is marked latest; the README points to its stable asset URL. Pull requests never publish.
 
 ## Binary releases
 
