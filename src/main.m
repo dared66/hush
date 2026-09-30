@@ -105,12 +105,12 @@ static void Select(AudioDeviceID d) {
 }
 static void Status(void) {
     AudioDeviceID p = Proxy(), d = Default();
-    Float64 meter[3] = {0};
-    if (p) sscanf(String(p, 'hmet').UTF8String, "%lf %lf %lf", &meter[0], &meter[1], &meter[2]);
+    Float64 meter[4] = {0};
+    if (p) sscanf(String(p, 'hmet').UTF8String, "%lf %lf %lf %lf", &meter[0], &meter[1], &meter[2], &meter[3]);
     NSDictionary *state = @{@"defaultID": @(d), @"defaultName": String(d, kAudioObjectPropertyName), @"proxyID": @(p),
         @"readyOutputUID": p ? String(p, 'huid') : @"",
         @"volume": @(Volume(d)), @"mute": @(Integer(d, kAudioDevicePropertyMute, kAudioDevicePropertyScopeOutput)),
-        @"inputPeak": @(meter[0]), @"outputPeak": @(meter[1]), @"callbacks": @(meter[2]), @"devices": Devices()};
+        @"inputPeak": @(meter[0]), @"outputPeak": @(meter[1]), @"callbacks": @(meter[2]), @"resyncs": @(meter[3]), @"devices": Devices()};
     NSData *json = [NSJSONSerialization dataWithJSONObject:state options:NSJSONWritingPrettyPrinted error:nil];
     puts([[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding].UTF8String);
 }

@@ -5,6 +5,13 @@
 - Cleans up source distribution, documentation, obsolete standalone-uninstaller files, and packaging checks.
 - Uses one version source for all packaged components.
 
+## 0.3.4
+
+- Recovers audio automatically when clock drift or a discontinuity strands playback outside the audio buffer, without changing the selected output or volume.
+- Requires fresh audio before resynchronizing so a stalled or stopped source cannot loop old sound.
+- Keeps other apps playing when one audio client starts or stops, and synchronizes shared stream state.
+- Adds sanitized tests of the actual audio callbacks for clock jumps, stalled sources, mute, unity gain, and overlapping clients. Diagnostic status now includes a resynchronization count.
+
 ## 0.3.3
 
 - Fixes selecting a monitor’s Hush output immediately switching back to previously selected speakers or headphones.

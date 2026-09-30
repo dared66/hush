@@ -497,13 +497,14 @@ class ProxyAudioDevice {
     std::atomic<UInt32> hushOutputID{0};
     CFStringRef hushOutputUID = nullptr; // Protected by outputDeviceMutex.
     std::atomic<float> hushInputPeak{0}, hushOutputPeak{0};
-    std::atomic<UInt64> hushCallbacks{0};
+    std::atomic<UInt64> hushCallbacks{0}, hushResyncs{0};
     std::atomic_bool inputIOIsActive;
     Float64 lastInputFrameTime = -1;
     Float64 lastInputBufferFrameSize = -1;
     Float64 inputOutputSampleDelta = -1;
     Float64 inputFinalFrameTime = -1;
     int inputCycleCount = 0;
+    UInt32 consecutiveBufferMisses = 0; // Protected by IOMutex.
     ConfigType nextConfigurationToRead = ConfigType::none;
     pid_t configuratorPid = 0;
     CFStringRef deviceName = NULL;

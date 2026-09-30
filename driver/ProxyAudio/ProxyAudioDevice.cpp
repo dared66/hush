@@ -2719,8 +2719,8 @@ OSStatus ProxyAudioDevice::GetDevicePropertyData(AudioServerPlugInDriverRef inDr
             *outDataSize = sizeof(CFStringRef); break;
         case 'hmet':
             if (inDataSize < sizeof(CFStringRef)) return kAudioHardwareBadPropertySizeError;
-            *((CFStringRef *)outData) = CFStringCreateWithFormat(NULL, NULL, CFSTR("%g %g %llu"),
-                (double)hushInputPeak.load(), (double)hushOutputPeak.load(), hushCallbacks.load());
+            *((CFStringRef *)outData) = CFStringCreateWithFormat(NULL, NULL, CFSTR("%g %g %llu %llu"),
+                (double)hushInputPeak.load(), (double)hushOutputPeak.load(), hushCallbacks.load(), hushResyncs.load());
             *outDataSize = sizeof(CFStringRef); break;
         case kAudioObjectPropertyBaseClass:
             //    The base class for kAudioDeviceClassID is kAudioObjectClassID
@@ -5059,6 +5059,8 @@ void ProxyAudioDevice::resetInputData() {
     lastInputBufferFrameSize = -1;
     inputOutputSampleDelta = -1;
     inputFinalFrameTime = -1;
+    inputCycleCount = 0;
+    consecutiveBufferMisses = 0;
 }
 
 OSStatus ProxyAudioDevice::StartIO(AudioServerPlugInDriverRef inDriver,
@@ -5076,8 +5078,9 @@ OSStatus ProxyAudioDevice::StartIO(AudioServerPlugInDriverRef inDriver,
 #pragma unused(inClientID)
     
     DebugMsg("ProxyAudio: StartIO");
-    resetInputData();
-
+    // Match the callback lock order: IO, then state. Only the first client
+    // starts a new timeline; another app joining must not clear live audio.
+    CAMutex::Locker ioLocker(IOMutex);
     CAMutex::Locker locker(stateMutex);
 
     //    figure out what we need to do
@@ -5085,6 +5088,8 @@ OSStatus ProxyAudioDevice::StartIO(AudioServerPlugInDriverRef inDriver,
         //    overflowing is an error
         theAnswer = kAudioHardwareIllegalOperationError;
     } else if (gDevice_IOIsRunning == 0) {
+        resetInputData();
+        CAMutex::Locker timestampLocker(getZeroTimestampMutex);
         //    We need to start the hardware, which in this case is just anchoring the time line.
         gDevice_IOIsRunning = 1;
         gDevice_NumberTimeStamps = 0;
@@ -5114,7 +5119,6 @@ OSStatus ProxyAudioDevice::StopIO(AudioServerPlugInDriverRef inDriver,
 
 #pragma unused(inClientID)
     DebugMsg("ProxyAudio: StopIO");
-    inputFinalFrameTime = lastInputFrameTime + lastInputBufferFrameSize;
 
     //    declare the local variables
     OSStatus theAnswer = 0;
@@ -5127,8 +5131,10 @@ OSStatus ProxyAudioDevice::StopIO(AudioServerPlugInDriverRef inDriver,
     FailWithAction(
         inDeviceObjectID != kObjectID_Device, theAnswer = kAudioHardwareBadObjectError, Done, "StopIO: bad device ID");
 
-    //    we need to hold the state lock
+    // The final marker belongs to the last client, and is shared with the
+    // output callback under IOMutex. Other clients may still be playing.
     {
+        CAMutex::Locker ioLocker(IOMutex);
         CAMutex::Locker locker(stateMutex);
 
         //    figure out what we need to do
@@ -5138,13 +5144,14 @@ OSStatus ProxyAudioDevice::StopIO(AudioServerPlugInDriverRef inDriver,
         } else if (gDevice_IOIsRunning == 1) {
             //    We need to stop the hardware, which in this case means that there's nothing to do.
             gDevice_IOIsRunning = 0;
+            inputFinalFrameTime = lastInputFrameTime + lastInputBufferFrameSize;
         } else {
             //    IO is still running, so just bump the counter
             --gDevice_IOIsRunning;
         }
+        inputIOIsActive = (gDevice_IOIsRunning > 0);
     }
     
-    inputIOIsActive = (gDevice_IOIsRunning > 0);
     ExecuteInAudioOutputThread(^ () { updateOutputDeviceStartedState(); });
     
     DebugMsg("ProxyAudio: StopIO finished");
@@ -5416,6 +5423,7 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
         }
     }
     
+    const bool receivedInput = inputCycleCount > 0;
     inputCycleCount = 0;
 
     if (lastInputFrameTime < 0 || lastInputBufferFrameSize < 0) {
@@ -5442,6 +5450,29 @@ OSStatus ProxyAudioDevice::outputDeviceIOProc(AudioDeviceID inDevice,
     }
 
     bool overrun = inputBuffer->Fetch(workBuffer, currentOutputDeviceBufferFrameSize, (SInt64)startFrame);
+
+    // A fixed clock offset can strand the reader outside the ring forever after
+    // a device-clock jump or accumulated drift. Re-anchor to fresh buffered audio
+    // after three consecutive misses. Never rewind a stopped/stalled producer:
+    // that would replay old sound rather than recover a live stream.
+    if (overrun && receivedInput && inputFinalFrameTime == -1) {
+        ++consecutiveBufferMisses;
+        if (consecutiveBufferMisses >= 3 &&
+            inputBuffer->mEndFrame - inputBuffer->mStartFrame >= currentOutputDeviceBufferFrameSize) {
+            Float64 target = lastInputFrameTime - lastInputBufferFrameSize
+                - currentOutputDeviceBufferFrameSize - currentOutputDeviceSafetyOffset;
+            target = std::max(target, (Float64)inputBuffer->mStartFrame);
+            target = std::min(target, (Float64)(inputBuffer->mEndFrame - currentOutputDeviceBufferFrameSize));
+            inputOutputSampleDelta = target - inOutputTime->mSampleTime;
+            startFrame = target;
+            overrun = inputBuffer->Fetch(workBuffer, currentOutputDeviceBufferFrameSize, (SInt64)startFrame);
+            consecutiveBufferMisses = 0;
+            hushResyncs.fetch_add(1);
+            smallestFramesToBufferEnd = -1;
+        }
+    } else if (!overrun || inputFinalFrameTime != -1) {
+        consecutiveBufferMisses = 0;
+    }
 
 #if DEBUG
     // This is just some debugging info to tell when we might be gradually

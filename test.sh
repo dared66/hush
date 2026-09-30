@@ -13,3 +13,6 @@ fi
 xcrun clang++ -std=c++17 -framework CoreAudio -framework CoreFoundation \
   src/driver-tests.cpp -o build/driver-tests
 ./build/driver-tests "$PWD/build/HushAudio.driver/Contents/MacOS/HushAudio"
+
+# Simulate clock jumps and overlapping clients through the real audio callbacks.
+zsh scripts/test-audio-stream.sh
